@@ -711,6 +711,7 @@ jobs:
          path: kernel_workspace/boot_avb_tool/AOSP-Testkey-BootSigner-main/boot.img
 
       - name: 🔎 Find Re-Kernel module zip (查找Re-Kernel最新模块并下载)
+        id: download-rekernel
         if: ${{ env.ENABLE_REKERNEL == 'true' }}
         uses: actions/github-script@v8
         env:
