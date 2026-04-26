@@ -15,13 +15,14 @@ on:
         default: 'ReSukiSU'
         
       kernel_version:
-        description: "📝请选择要编译的版本："
-        required: true
+        description: "📝请选择要编译的版本"
+        required: false
         type: choice
         options:
           - '6.6.56'
           - '6.6.89'
           - '6.6.102'
+          - '6.6.118'
         default: '6.6.89'
 
       custom_kernel_suffix:
@@ -108,6 +109,10 @@ jobs:
               echo "os_patch_level=2025-10" >> $GITHUB_ENV
               echo "releases=TB322FC_1.5.10.096" >> $GITHUB_ENV
               ;;
+            "6.6.118")
+              echo "os_patch_level=2026-01" >> $GITHUB_ENV
+              echo "releases=TB322_ZUXOS_1.5.10.183" >> $GITHUB_ENV
+              ;;
           esac
            if [ -z "${{ env.CUSTOM_KERNEL_SUFFIX }}" ]; then
             case "${{ env.KERNEL_VERSION }}" in
@@ -119,6 +124,9 @@ jobs:
                 ;;
               "6.6.102")
                 DEFAULT_SUFFIX='-android15-8-g06bc416365ef-ab14559830-4k'
+                ;;
+              "6.6.118")
+                DEFAULT_SUFFIX='-android15-8-g350f378eb496-ab14943902-4k'
                 ;;
             esac
             echo "DEFAULT_SUFFIX=$DEFAULT_SUFFIX" >> $GITHUB_ENV
@@ -137,6 +145,9 @@ jobs:
                 ;;
               6.6.102)
                 KERNEL_TIME='Tue Dec 9 15:43:22 UTC 2025'
+                ;;
+              6.6.102)
+                KERNEL_TIME='Thu Feb 26 02:40:50 UTC 2026'
                 ;;
             esac
             echo "KERNEL_TIME=$KERNEL_TIME" >> $GITHUB_ENV
@@ -722,9 +733,14 @@ jobs:
          name: Boot_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_${{ env.KSU_TYPE }}_AOSP_Signed
          path: kernel_workspace/boot_avb_tool/AOSP-Testkey-BootSigner-main/boot.img
 
+  upload_rekernel:
+    name: Upload Re-Kernel Module
+    if: ${{ github.event.inputs.enable_ReKernel == 'true' }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
       - name: 🔎 Find Re-Kernel module zip (查找Re-Kernel最新模块并下载)
         id: download-rekernel
-        if: ${{ env.ENABLE_REKERNEL == 'true' }}
         uses: actions/github-script@v8
         env:
           KERNEL_MAJOR: "6.6"
@@ -742,37 +758,59 @@ jobs:
             });
             core.info(`最新版本: ${release.data.tag_name}`);
             const escapedKernel = kernelMajor.replace(/\./g, '\\.');
-            const pattern = new RegExp(`^Re-Kernel-v[\\d.]+-${escapedKernel}\\.zip$`);
+            const pattern66 = new RegExp(`^Re-Kernel-v([\\d.]+)-${escapedKernel}\\.zip$`);
+            const patternAny = new RegExp(`^Re-Kernel.*\\.zip$`, 'i');
 
             let targetAsset = null;
+            let versionNumber = '';
+            let isExactMatch = false;
+
             for (const asset of release.data.assets || []) {
-              if (pattern.test(asset.name)) {
+              const match = asset.name.match(pattern66);
+              if (match) {
                 targetAsset = asset;
+                versionNumber = match[1];
+                isExactMatch = true;
+                core.info(`找到精确匹配 6.6: ${asset.name}`);
                 break;
               }
             }
 
             if (!targetAsset) {
-              core.setFailed(`未找到匹配的 Re-Kernel 模块资产 (模式: ${pattern.source})`);
+              core.info('未找到6.6版本，查找任意Re-Kernel模块...');
+              for (const asset of release.data.assets || []) {
+                const match = asset.name.match(patternAny);
+                if (match) {
+                  targetAsset = asset;
+                  versionNumber = asset.name.replace(/Re-Kernel-v|.zip/gi, '').replace(/^-/, '').replace(/-$/, '') || 'latest';
+                  isExactMatch = false;
+                  core.info(`找到Re-Kernel模块: ${asset.name}`);
+                  break;
+                }
+              }
+            }
+
+            if (!targetAsset) {
+              core.setFailed('未找到任何 Re-Kernel 模块资产');
               return;
             }
 
-            core.info(`找到目标资产: ${targetAsset.name} (${(targetAsset.size / 1024).toFixed(1)} KB)`);
+            core.info(`找到目标资产: ${targetAsset.name} (版本: ${versionNumber}, ${(targetAsset.size / 1024).toFixed(1)} KB)`);
             core.setOutput('asset-name', targetAsset.name);
             core.setOutput('download-url', targetAsset.browser_download_url);
-            core.setOutput('tag-name', release.data.tag_name);
+            core.setOutput('version-number', versionNumber);
 
       - name: 📥 Download Re-Kernel module (下载 Re-Kernel 模块)
-        if: ${{ env.ENABLE_REKERNEL == 'true' }}
-        working-directory: kernel_workspace
         env:
           ASSET_NAME: ${{ steps.download-rekernel.outputs.asset-name }}
           DOWNLOAD_URL: ${{ steps.download-rekernel.outputs.download-url }}
-          ARTIFACT_NAME: Re-Kernel-v${{ steps.download-rekernel.outputs.tag-name }}-6.6
+          VERSION_NUMBER: ${{ steps.download-rekernel.outputs.version-number }}
         run: |
           set -euo pipefail
+          ARTIFACT_NAME="Re-Kernel-v${VERSION_NUMBER}"
           echo "正在下载 Re-Kernel 模块: $ASSET_NAME"
           echo "下载地址: $DOWNLOAD_URL"
+          echo "Artifact 名称: $ARTIFACT_NAME"
           aria2c -s16 -x16 -k1M "$DOWNLOAD_URL" -o "$ASSET_NAME"
           echo "✓ Re-Kernel 模块下载完成"
           ls -lh "$ASSET_NAME"
@@ -783,9 +821,7 @@ jobs:
           ls -lR "$ARTIFACT_NAME"
 
       - name: 📤 Upload Re-Kernel module (上传 Re-Kernel 模块)
-        if: ${{ env.ENABLE_REKERNEL == 'true' }}
         uses: actions/upload-artifact@v5
         with:
-          name: Re-Kernel-v${{ steps.download-rekernel.outputs.tag-name }}-6.6
-          path: kernel_workspace/Re-Kernel-v${{ steps.download-rekernel.outputs.tag-name }}-6.6
-          
+          name: Re-Kernel-v${{ steps.download-rekernel.outputs.version-number }}
+          path: Re-Kernel-v${{ steps.download-rekernel.outputs.version-number }}
