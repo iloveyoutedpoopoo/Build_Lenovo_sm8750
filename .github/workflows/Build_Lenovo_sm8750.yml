@@ -491,6 +491,56 @@ jobs:
               sed -i 's/vma = find_vma(mm, start_vaddr);/struct vm_area_struct *vma = find_vma(mm, start_vaddr);/' task_mmu.c
               ;;
           esac
+      - name: 🔧 Add DroidSpaces kABI Patch (添加 DroidSpaces 核心防重啟補丁)
+        run: |
+          cd kernel_workspace/common
+          cat << 'EOF' > fix_sysvipc_kABI.patch
+          From 769a5cfdc17b98d8e0bd491d45f5651180e42196 Mon Sep 17 00:00:00 2001
+          From: nullptr-t-oss <127822226+nullptr-t-oss@users.noreply.github.com>
+          Date: Wed, 8 Apr 2026 09:18:23 +0000
+          Subject: [PATCH] ABI: use ABI padding for SYSVIPC
+          
+          This commit allows us to enable CONFIG_SYSVIPC in defconfig without breaking kernel ABI.
+          
+          Signed-off-by: nullptr-t-oss <127822226+nullptr-t-oss@users.noreply.github.com>
+          ---
+           include/linux/sched.h | 10 ++++++++--
+           1 file changed, 8 insertions(+), 2 deletions(-)
+          
+          diff --git a/include/linux/sched.h b/include/linux/sched.h
+          index b275cd285182..f03e0d5e49c1 100644
+          --- a/include/linux/sched.h
+          +++ b/include/linux/sched.h
+          @@ -1074,8 +1074,8 @@ struct task_struct {
+           	struct nameidata		*nameidata;
+           
+           #ifdef CONFIG_SYSVIPC
+          -	struct sysv_sem			sysvsem;
+          -	struct sysv_shm			sysvshm;
+          +	// struct sysv_sem			sysvsem;
+          +	// struct sysv_shm			sysvshm;
+           #endif
+           #ifdef CONFIG_DETECT_HUNG_TASK
+           	unsigned long			last_switch_count;
+          @@ -1513,9 +1513,15 @@ struct task_struct {
+           	ANDROID_KABI_RESERVE(3);
+           	ANDROID_KABI_RESERVE(4);
+           	ANDROID_KABI_RESERVE(5);
+          +
+          +#ifdef CONFIG_SYSVIPC
+          +	ANDROID_KABI_USE(6, struct sysv_sem sysvsem);
+          +	_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(7); ANDROID_KABI_RESERVE(8), struct sysv_shm sysvshm);
+          +#else
+           	ANDROID_KABI_RESERVE(6);
+           	ANDROID_KABI_RESERVE(7);
+           	ANDROID_KABI_RESERVE(8);
+          +#endif
+           
+           	/*
+           	 * New fields for task_struct should be added above here, so that
+          EOF
+          echo "正在應用 DroidSpaces kABI 補丁..."
+          patch -p1 < fix_sysvipc_kABI.patch || true
 
       - name: 🔧 Set gki_defconfig (设置编译配置) 
         run: |
@@ -502,7 +552,7 @@ jobs:
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%-Re-TG@qdykernel"' >> ./common/arch/arm64/configs/gki_defconfig
           fi
           
-          if [ "${{ env.ENABLE_SUSFS }}" == 'true' ];then
+          if[ "${{ env.ENABLE_SUSFS }}" == 'true' ];then
             echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -526,6 +576,26 @@ jobs:
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          
+          # ==== 新增 DroidSpaces / Docker 所需的支援配置 ====
+          cat << 'EOF' >> ./common/arch/arm64/configs/gki_defconfig
+          # IPC & Namespaces
+          CONFIG_SYSVIPC=y
+          CONFIG_POSIX_MQUEUE=y
+          CONFIG_IPC_NS=y
+          CONFIG_PID_NS=y
+          # HW Access Support
+          CONFIG_DEVTMPFS=y
+          # Networking (Docker/NAT/UFW/Fail2ban support)
+          CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+          CONFIG_NETFILTER_XT_TARGET_REJECT=y
+          CONFIG_NETFILTER_XT_TARGET_LOG=y
+          CONFIG_NETFILTER_XT_MATCH_RECENT=y
+          CONFIG_IP_SET=y
+          CONFIG_IP_SET_HASH_IP=y
+          CONFIG_IP_SET_HASH_NET=y
+          CONFIG_NETFILTER_XT_SET=y
+          EOF
           
           #Remove check_defconfig
           sudo sed -i 's/check_defconfig//' ./common/build.config.gki
