@@ -70,13 +70,9 @@ on:
         required: false
         default: true
         type: boolean
-        
-      enable_droidspace:
-        description: "🐳 启用 Droidspace (LXC/Docker/完整Linux容器) 支持"
-        required: false
-        default: true
-        type: boolean
 
+      
+       
 jobs:
   build:
     name: Build_${{ github.event.inputs.kernel_version }}
@@ -93,7 +89,6 @@ jobs:
       ENABLE_KPM: ${{ github.event.inputs.enable_kpm }}
       ENABLE_SUSFS: ${{ github.event.inputs.enable_susfs }}
       ENABLE_SIGNED: ${{ github.event.inputs.enable_signed }}
-      ENABLE_DROIDSPACE: ${{ github.event.inputs.enable_droidspace }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -497,59 +492,6 @@ jobs:
               ;;
           esac
 
-      - name: 🔧 Apply Droidspace kABI Patch (应用 Droidspace kABI 补丁)
-        if: ${{ env.ENABLE_DROIDSPACE == 'true' }}
-        working-directory: kernel_workspace/common
-        run: |
-          echo "正在应用 SYSVIPC kABI 补丁以防止 Bootloop..."
-          cat << 'EOF' > sysvipc_kabi.patch
-          From 769a5cfdc17b98d8e0bd491d45f5651180e42196 Mon Sep 17 00:00:00 2001
-          From: nullptr-t-oss <127822226+nullptr-t-oss@users.noreply.github.com>
-          Date: Wed, 8 Apr 2026 09:18:23 +0000
-          Subject: [PATCH] ABI: use ABI padding for SYSVIPC
-
-          This commit allows us to enable CONFIG_SYSVIPC in defconfig without breaking kernel ABI.
-
-          Signed-off-by: nullptr-t-oss <127822226+nullptr-t-oss@users.noreply.github.com>
-          ---
-           include/linux/sched.h | 10 ++++++++--
-           1 file changed, 8 insertions(+), 2 deletions(-)
-
-          diff --git a/include/linux/sched.h b/include/linux/sched.h
-          index b275cd285182..f03e0d5e49c1 100644
-          --- a/include/linux/sched.h
-          +++ b/include/linux/sched.h
-          @@ -1074,8 +1074,8 @@ struct task_struct {
-           	struct nameidata		*nameidata;
-           
-           #ifdef CONFIG_SYSVIPC
-          -	struct sysv_sem			sysvsem;
-          -	struct sysv_shm			sysvshm;
-          +	// struct sysv_sem			sysvsem;
-          +	// struct sysv_shm			sysvshm;
-           #endif
-           #ifdef CONFIG_DETECT_HUNG_TASK
-           	unsigned long			last_switch_count;
-          @@ -1513,9 +1513,15 @@ struct task_struct {
-           	ANDROID_KABI_RESERVE(3);
-           	ANDROID_KABI_RESERVE(4);
-           	ANDROID_KABI_RESERVE(5);
-          +
-          +#ifdef CONFIG_SYSVIPC
-          +	ANDROID_KABI_USE(6, struct sysv_sem sysvsem);
-          +	_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(7); ANDROID_KABI_RESERVE(8), struct sysv_shm sysvshm);
-          +#else
-           	ANDROID_KABI_RESERVE(6);
-           	ANDROID_KABI_RESERVE(7);
-           	ANDROID_KABI_RESERVE(8);
-          +#endif
-           
-           	/*
-           	 * New fields for task_struct should be added above here, so that
-          EOF
-          patch -p1 < sysvipc_kabi.patch || { echo "::warning::SYSVIPC kABI 补丁应用失败，可能已应用或代码已更改"; }
-          rm -f sysvipc_kabi.patch
-
       - name: 🔧 Set gki_defconfig (设置编译配置) 
         run: |
           cd kernel_workspace
@@ -578,44 +520,6 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./common/arch/arm64/configs/gki_defconfig
           else
             echo "未启用SUSFS 跳过SUSFS配置"
-          fi
-          
-          # ==========================================
-          # 🟢 注入 Droidspace / Docker / LXC 容器環境所需的內核配置
-          # ==========================================
-          if [ "${{ env.ENABLE_DROIDSPACE }}" == 'true' ]; then
-            echo "==> 啟用 Droidspace / LXC / Docker 容器環境支援..."
-            cat << 'EOF' >> ./common/arch/arm64/configs/gki_defconfig
-          # Kernel configurations for full DroidSpaces support for GKI
-          # Copyright (C) 2026 ravindu644 <droidcasts@protonmail.com>
-
-          # IPC
-          CONFIG_SYSVIPC=y
-          CONFIG_POSIX_MQUEUE=y
-
-          # Namespaces (已補齊避免 SukiSU 的 PID_NS 缺少依賴導致語法報錯)
-          CONFIG_NAMESPACES=y
-          CONFIG_IPC_NS=y
-          CONFIG_PID_NS=y
-
-          # HW Access Support
-          CONFIG_DEVTMPFS=y
-
-          # Networking (Docker/NAT support)
-          CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
-
-          # UFW support
-          CONFIG_NETFILTER_XT_TARGET_REJECT=y
-          CONFIG_NETFILTER_XT_TARGET_LOG=y
-          CONFIG_NETFILTER_XT_MATCH_RECENT=y
-
-          # Fail2ban support
-          CONFIG_IP_SET=y
-          CONFIG_IP_SET_HASH_IP=y
-          CONFIG_IP_SET_HASH_NET=y
-          CONFIG_NETFILTER_XT_SET=y
-          EOF
-            echo "==> Droidspace 容器配置注入完成！"
           fi
           
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
