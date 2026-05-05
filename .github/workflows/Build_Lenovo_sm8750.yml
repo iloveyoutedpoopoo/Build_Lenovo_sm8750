@@ -26,7 +26,7 @@ on:
         default: '6.6.89'
 
       custom_kernel_suffix:
-        description: "✏️ 自定義內核名稱"
+        description: "✏️ 自定義內核名稱 (留空則用官核)"
         required: false
         default: ''
 
@@ -76,12 +76,9 @@ jobs:
       ENABLE_SUSFS: ${{ github.event.inputs.enable_susfs }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - name: ⚙️ Set Config (設置配置)
         run: |
-          # 根據版本設置 Patch Level 用於下載源碼
           case "${{ env.KERNEL_VERSION }}" in
             "6.6.56") PATCH="2024-11" ; SUFFIX="-android15-8-g38447e018c92-ab12829524-4k" ; KTIME="Thu Dec 19 17:58:46 UTC 2024" ;;
             "6.6.89") PATCH="2025-06" ; SUFFIX="-android15-8-g14220ae4ce65-ab13680582-4k" ; KTIME="Mon Jun 23 07:30:57 UTC 2025" ;;
@@ -90,43 +87,51 @@ jobs:
           esac
           echo "PATCH_LEVEL=$PATCH" >> $GITHUB_ENV
           echo "KERNEL_TIME=$KTIME" >> $GITHUB_ENV
-          [ -z "${{ env.CUSTOM_KERNEL_SUFFIX }}" ] && echo "DEFAULT_SUFFIX=$SUFFIX" >> $GITHUB_ENV || echo "DEFAULT_SUFFIX=${{ env.CUSTOM_KERNEL_SUFFIX }}" >> $GITHUB_ENV
+          if [ -z "${{ env.CUSTOM_KERNEL_SUFFIX }}" ]; then
+            echo "DEFAULT_SUFFIX=$SUFFIX" >> $GITHUB_ENV
+          else
+            echo "DEFAULT_SUFFIX=${{ env.CUSTOM_KERNEL_SUFFIX }}" >> $GITHUB_ENV
+          fi
 
       - name: 🛠 Install dependencies (安裝依賴與源碼)
         run: |
-          mkdir kernel_workspace && cd kernel_workspace
+          mkdir -p kernel_workspace && cd kernel_workspace
           sudo apt update && sudo apt install -y binutils python-is-python3 libssl-dev libelf-dev dos2unix p7zip-full zstd aria2
           
-          # 下載編譯器與工具
+          # 下載編譯器
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/clang-r510928.zip -o clang.zip
           unzip -q clang.zip -d clang18 && rm -f clang.zip
+          
+          # 下載構建工具
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/build-tools.zip -o bt.zip
           unzip -q bt.zip && rm -f bt.zip
           
-          # 下載內核源碼 (Common)
+          # 下載內核源碼
           aria2c -s16 -x16 -k1M "https://github.com/showdo/Build_Lenovo_sm8750/releases/download/common/${{ env.PATCH_LEVEL }}.tar.gz" -o common.tar.gz
-          mkdir common && tar -xzf common.tar.gz -C common && rm -f common.tar.gz
+          mkdir -p common && tar -xzf common.tar.gz -C common && rm -f common.tar.gz
           
           # 去除 dirty 後綴
-          sed -i 's/ -dirty//g' common/scripts/setlocalversion
+          [ -f common/scripts/setlocalversion ] && sed -i 's/ -dirty//g' common/scripts/setlocalversion
 
-      - name: 🔧 Add Features (添加補丁項目: Re-Kernel/Adios/LZ4/BBG)
+      - name: 🔧 Add Features (添加補丁項目)
         run: |
           cd kernel_workspace
-          # Re-Kernel
+          # Re-Kernel 支持
           if [ "${{ env.ENABLE_REKERNEL }}" == "true" ]; then
             git clone https://github.com/Sakion-Team/Re-Kernel.git
-            cp Re-Kernel/LKM-Source/* common/drivers/rekernel/ 2>/dev/null || mkdir -p common/drivers/rekernel && cp Re-Kernel/LKM-Source/* common/drivers/rekernel/
+            mkdir -p common/drivers/rekernel
+            cp -r Re-Kernel/LKM-Source/* common/drivers/rekernel/
+            sed -i '/endmenu/i source "drivers/rekernel/Kconfig"' common/drivers/Kconfig
             echo "obj-\$(CONFIG_REKERNEL) += rekernel/" >> common/drivers/Makefile
-            echo 'source "drivers/rekernel/Kconfig"' >> common/drivers/Kconfig
             echo "CONFIG_REKERNEL=y" >> common/arch/arm64/configs/gki_defconfig
           fi
-          # Adios & Optimization
+          
+          # 優化補丁
           git clone https://github.com/cctv18/oppo_oplus_realme_sm8750.git
           cp oppo_oplus_realme_sm8750/zram_patch/*.patch common/
           cd common
           git apply 001-lz4.patch || true
-          echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> arch/arm64/configs/gki_defconfig
+          [ "${{ env.ENABLE_ADIOS }}" == "true" ] && echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> arch/arm64/configs/gki_defconfig
 
       - name: ⚙️ Setup KSU & SUSFS
         run: |
@@ -148,23 +153,32 @@ jobs:
 
       - name: 🔨 Build Kernel (編譯 Image)
         run: |
-          cd kernel_workspace/common
-          export PATH="$(pwd)/../clang18/bin:$(pwd)/../build-tools/bin:$PATH"
+          # 使用絕對路徑確保不會找不到目錄
+          ROOT_DIR="${{ github.workspace }}/kernel_workspace"
+          cd $ROOT_DIR/common
           
-          # 設置版本名稱
-          sed -i "s/-4k/${{ env.DEFAULT_SUFFIX }}/g" arch/arm64/configs/gki_defconfig
+          # 配置環境變數
+          export PATH="$ROOT_DIR/clang18/bin:$ROOT_DIR/build-tools/bin:$PATH"
+          export KBUILD_BUILD_TIMESTAMP="${{ env.KERNEL_TIME }}"
           
-          # 編譯
+          # 安全替換內核名稱 (使用 : 作為分隔符避免自定義名稱含 / 報錯)
+          ESCAPED_SUFFIX=$(echo "${{ env.DEFAULT_SUFFIX }}" | sed 's/[&/:]/\\&/g')
+          sed -i "s:-4k:${ESCAPED_SUFFIX}:g" arch/arm64/configs/gki_defconfig
+          
+          # 基礎配置
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
+          
+          # 開始編譯
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out gki_defconfig
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out Image
 
       - name: 📦 Patch KPM (可選)
         if: ${{ env.ENABLE_KPM == 'true' }}
         run: |
-          cd kernel_workspace/common/out/arch/arm64/boot
+          cd ${{ github.workspace }}/kernel_workspace/common/out/arch/arm64/boot
           curl -LO https://github.com/ShirkNeko/SukiSU_KernelPatch_patch/releases/download/0.12.2/patch_linux
           chmod +x patch_linux && ./patch_linux
-          mv oImage Image
+          [ -f oImage ] && mv oImage Image
 
       - name: 📤 Upload Image
         uses: actions/upload-artifact@v5
