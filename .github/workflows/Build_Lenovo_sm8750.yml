@@ -526,7 +526,28 @@ jobs:
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
 
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          
+          DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
+
+          # 基礎 Namespace 功能
+          sed -i 's/# CONFIG_NAMESPACES is not set/CONFIG_NAMESPACES=y/' $DEFCONFIG
+          echo "CONFIG_NAMESPACES=y" >> $DEFCONFIG
+          echo "CONFIG_USER_NS=y" >> $DEFCONFIG
+          echo "CONFIG_PID_NS=y" >> $DEFCONFIG
+          echo "CONFIG_NET_NS=y" >> $DEFCONFIG
+          echo "CONFIG_UTS_NS=y" >> $DEFCONFIG
+          echo "CONFIG_IPC_NS=y" >> $DEFCONFIG
+
+          # Cgroups (Droidspaces 管理進程所需)
+          echo "CONFIG_CGROUPS=y" >> $DEFCONFIG
+          echo "CONFIG_CGROUP_PIDS=y" >> $DEFCONFIG
+          echo "CONFIG_MEMCG=y" >> $DEFCONFIG
+          echo "CONFIG_CGROUP_SCHED=y" >> $DEFCONFIG
+          echo "CONFIG_CGROUP_FREEZER=y" >> $DEFCONFIG
+          echo "CONFIG_CGROUP_DEVICE=y" >> $DEFCONFIG
+
+          # 額外支持 (提升容器穩定性)
+          echo "CONFIG_NAMESPACES_CONFIG=y" >> $DEFCONFIG
+          echo "CONFIG_POSIX_MQUEUE=y" >> $DEFCONFIG
           #Remove check_defconfig
           sudo sed -i 's/check_defconfig//' ./common/build.config.gki
 
