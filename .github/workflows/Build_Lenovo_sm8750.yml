@@ -476,37 +476,8 @@ jobs:
               grep "KSU_VERSION_FULL" kernel/Makefile
               echo "SukiSU版本号: v${KSU_API_VERSION}-${GIT_COMMIT_HASH}-TG@qdykernel"
             fi
-
-            echo "正在修復 KSU user_arg_ptr 型別衝突..."
-
-            # 步驟 1：清除所有已加入的破損前向宣告
-            find . -type f \( -name "adb_root.h" -o -name "sucompat.h" -o -name "ksu.h" \) \
-              -exec sed -i '/^struct user_arg_ptr;$/d' {} +
-
-            # 步驟 2：在 adb_root.h 加入正確的核心標頭，提供完整型別定義
-            find . -type f -name "adb_root.h" | while read f; do
-              if ! grep -q "linux/binfmts.h\|linux/fs.h" "$f"; then
-                sed -i '1i #include <linux/binfmts.h>' "$f"
-                echo "✓ 已在 $f 加入 #include <linux/binfmts.h>"
-              fi
-            done
-
-            # 步驟 3：若 binfmts.h 仍無法提供定義，退回 void* 兼容方案
-            find . -type f \( -name "adb_root.h" -o -name "adb_root.c" \
-              -o -name "sucompat.c" -o -name "sucompat.h" \) | while read f; do
-              if grep -q "struct user_arg_ptr \*envp" "$f"; then
-                # 先確認 binfmts.h 是否已提供完整定義，否則改用 void*
-                if ! grep -rq "struct user_arg_ptr {" \
-                    "${GITHUB_WORKSPACE}/kernel_workspace/common/include/linux/binfmts.h" 2>/dev/null && \
-                   ! grep -rq "struct user_arg_ptr {" \
-                    "${GITHUB_WORKSPACE}/kernel_workspace/common/include/linux/fs.h" 2>/dev/null; then
-                  sed -i 's/struct user_arg_ptr \*envp/void *envp/g' "$f"
-                  echo "⚠️ 退回 void* 方案：已修改 $f"
-                fi
-              fi
-            done
-
-            echo "✓ KSU user_arg_ptr 型別衝突修復完成"
+            
+            echo "✓ KSU 同步完成。移除了过时且破坏性的 user_arg_ptr 手动替换，交由原生处理。"
 
       - name: 🔧 Set up SUSFS (配置 SUSFS)
         if: ${{ env.ENABLE_SUSFS == 'true' }}
