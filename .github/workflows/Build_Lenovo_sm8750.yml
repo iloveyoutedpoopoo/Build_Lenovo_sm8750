@@ -545,8 +545,10 @@ jobs:
           # Namespaces
           CONFIG_IPC_NS=y
           CONFIG_PID_NS=y
+          CONFIG_USER_NS=y
           # HW Access Support
           CONFIG_DEVTMPFS=y
+          CONFIG_SQUASHFS=y
           # Networking (Docker/NAT support)
           CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
           # UFW support
