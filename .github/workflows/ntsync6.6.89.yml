@@ -567,7 +567,6 @@ jobs:
           CONFIG_NETFILTER_XT_SET=y
           EOF
           echo "==> Droidspace 核心設定注入完成！"
-
       - name: ⚡ Add NTsync Support (添加 NTsync 支持)
         if: ${{ env.ENABLE_NTSYNC == 'true' }}
         working-directory: kernel_workspace/common
@@ -592,6 +591,20 @@ jobs:
             patch -p1 --ignore-whitespace -F 3 < ntsync.patch || true
             rm -f ntsync.patch
             echo "✓ NTsync 补丁套用成功"
+            
+            # 💡關鍵修復：強制將 ntsync 寫入 Kconfig 與 Makefile (使用 echo 避免 YAML 縮排報錯)
+            if ! grep -q "ntsync.o" drivers/misc/Makefile; then
+              echo 'obj-$(CONFIG_NTSYNC) += ntsync.o' >> drivers/misc/Makefile
+              echo "✓ 已強制將 ntsync 加入 Makefile"
+            fi
+            
+            if ! grep -q "config NTSYNC" drivers/misc/Kconfig; then
+              echo "" >> drivers/misc/Kconfig
+              echo "config NTSYNC" >> drivers/misc/Kconfig
+              echo "	bool \"NT synchronization primitive emulation\"" >> drivers/misc/Kconfig
+              echo "	default y" >> drivers/misc/Kconfig
+              echo "✓ 已強制將 ntsync 加入 Kconfig"
+            fi
           else
             echo "::warning::未能从本地或网络获取 NTsync 补丁！如需开启此功能，请将您的 NTsync 补丁文件放置于 .github/workflows/tools/ntsync.patch 中。"
           fi
@@ -601,7 +614,7 @@ jobs:
             echo "CONFIG_NTSYNC=y" >> arch/arm64/configs/gki_defconfig
             echo "✓ 已在 gki_defconfig 中注入 CONFIG_NTSYNC=y"
           fi
-
+          
       - name: 🔧 Set gki_defconfig (设置编译配置) 
         run: |
           cd kernel_workspace
