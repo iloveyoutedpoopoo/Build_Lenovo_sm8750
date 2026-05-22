@@ -565,6 +565,9 @@ jobs:
           CONFIG_IP_SET_HASH_IP=y
           CONFIG_IP_SET_HASH_NET=y
           CONFIG_NETFILTER_XT_SET=y
+          # Xbox & Razer Joystick Force Feedback Support
+          CONFIG_JOYSTICK_XPAD_FF=y
+          CONFIG_JOYSTICK_XPAD_LEDS=y
           EOF
           echo "==> Droidspace 核心設定注入完成！"
       - name: ⚡ Add NTsync Support (添加 NTsync 支持)
